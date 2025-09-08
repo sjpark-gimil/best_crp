@@ -1,0 +1,157 @@
+#include "main.h"
+#include "usart.h"
+#include "gpio.h"
+
+#include <string.h>
+#include <stdbool.h>
+
+/* ---------------- Configuration ---------------- */
+#define HAVE_LED   0
+#define LED_PORT   GPIOA
+#define LED_PIN    GPIO_PIN_5
+
+#define CMD_GET_NAME    0x0B   // adjust if your spec says different
+#define CMD_SET_NAME    0x0A
+#define CMD_GET_STATUS  0x01   // adjust if your spec says different
+
+/* ---------------- Prototypes ---------------- */
+void SystemClock_Config(void);
+
+/* ---------------- UART / BLE helpers ---------------- */
+extern UART_HandleTypeDef huart2;
+
+/* XOR over len bytes */
+static uint8_t calc_fcc(const uint8_t *buf, int len) {
+    uint8_t fcc = 0;
+    for (int i = 0; i < len; i++) fcc ^= buf[i];
+    return fcc;
+}
+
+/* Send: [0xFE][BC][CMD][DATA...][FCC] */
+bool BLE_SendCommand(uint8_t cmd, const uint8_t *data, uint8_t datalen) {
+    uint8_t buf[64];
+    int idx = 0;
+
+    if (datalen > (uint8_t)(sizeof(buf) - 4)) return false; // guard
+
+    buf[idx++] = 0xFE;                    // STX
+    buf[idx++] = 1 + datalen + 1;         // BC = CMD + DATA + FCC
+    buf[idx++] = cmd;                     // CMD
+    if (datalen && data) {
+        memcpy(&buf[idx], data, datalen); // DATA
+        idx += datalen;
+    }
+    buf[idx] = calc_fcc(buf, idx);        // FCC over STX..last
+
+    return HAL_UART_Transmit(&huart2, buf, (uint16_t)(idx + 1), 200) == HAL_OK;
+}
+
+/* Read one frame; returns data length or negative on error */
+int BLE_ReadResponse(uint8_t *out_cmd, uint8_t *data, int maxdata, uint32_t timeout_ms) {
+    uint8_t stx = 0, bc = 0;
+
+    if (HAL_UART_Receive(&huart2, &stx, 1, timeout_ms) != HAL_OK) return -1;
+    if (stx != 0xFE) return -2;
+
+    if (HAL_UART_Receive(&huart2, &bc, 1, timeout_ms) != HAL_OK) return -3;
+    if (bc < 2) return -4; // must have CMD + FCC
+
+    uint8_t tail[64];
+    if (bc > sizeof(tail)) return -5;
+    if (HAL_UART_Receive(&huart2, tail, bc, timeout_ms) != HAL_OK) return -6;
+
+    // FCC check
+    uint8_t fcc_rx = tail[bc - 1];
+    uint8_t fcc = 0;
+    fcc ^= stx;
+    fcc ^= bc;
+    for (int i = 0; i < bc - 1; ++i) fcc ^= tail[i];
+    if (fcc != fcc_rx) return -7;
+
+    if (out_cmd) *out_cmd = tail[0];      // CMD
+    int datalen = bc - 2;                 // exclude CMD + FCC
+    if (datalen > maxdata) datalen = maxdata;
+    if (datalen > 0 && data) memcpy(data, &tail[1], datalen);
+
+    return datalen;
+}
+
+/* Get name into out[] */
+bool FBL_GetName(char *out, size_t out_sz, uint32_t timeout_ms) {
+    if (!out || out_sz == 0) return false;
+    uint8_t cmd = 0, rx[64];
+
+    if (!BLE_SendCommand(CMD_GET_NAME, NULL, 0)) return false;
+
+    int n = BLE_ReadResponse(&cmd, rx, sizeof(rx) - 1, timeout_ms);
+    if (n <= 0) return false;
+
+    if ((size_t)n >= out_sz) n = (int)out_sz - 1;
+    memcpy(out, rx, (size_t)n);
+    out[n] = 0;
+    return true;
+}
+
+/* Set name */
+bool FBL_SetName(const char *name, uint32_t timeout_ms) {
+    if (!name) return false;
+    size_t len = strlen(name);
+    if (len > 31) len = 31;  // per module spec
+    return BLE_SendCommand(CMD_SET_NAME, (const uint8_t*)name, (uint8_t)len);
+}
+
+/* ---------------- Main ---------------- */
+int main(void)
+{
+  HAL_Init();
+  SystemClock_Config();
+  MX_GPIO_Init();
+  MX_USART2_UART_Init();
+
+  // after MX_GPIO_Init(); MX_USART2_UART_Init();
+  uint8_t tx = 0x55, rx = 0;   // 0x55 = 01010101 (easy to scope/see)
+  for (;;) {
+      HAL_UART_Transmit(&huart2, &tx, 1, 100);
+      if (HAL_UART_Receive(&huart2, &rx, 1, 100) == HAL_OK) {
+          __NOP();  // BP here: means loopback OK
+      }
+      HAL_Delay(100);
+  }
+
+
+void SystemClock_Config(void)
+{
+  RCC_OscInitTypeDef RCC_OscInitStruct = {0};
+  RCC_ClkInitTypeDef RCC_ClkInitStruct = {0};
+
+  __HAL_PWR_VOLTAGESCALING_CONFIG(PWR_REGULATOR_VOLTAGE_SCALE1);
+
+  /* MSI ON, no PLL */
+  RCC_OscInitStruct.OscillatorType      = RCC_OSCILLATORTYPE_MSI;
+  RCC_OscInitStruct.MSIState            = RCC_MSI_ON;
+  RCC_OscInitStruct.MSICalibrationValue = 0;
+  RCC_OscInitStruct.MSIClockRange       = RCC_MSIRANGE_5;  /* ~2.097 MHz */
+  RCC_OscInitStruct.PLL.PLLState        = RCC_PLL_NONE;
+  if (HAL_RCC_OscConfig(&RCC_OscInitStruct) != HAL_OK) {
+    Error_Handler();
+  }
+
+  RCC_ClkInitStruct.ClockType      = RCC_CLOCKTYPE_HCLK | RCC_CLOCKTYPE_SYSCLK
+                                   | RCC_CLOCKTYPE_PCLK1| RCC_CLOCKTYPE_PCLK2;
+  RCC_ClkInitStruct.SYSCLKSource   = RCC_SYSCLKSOURCE_MSI;
+  RCC_ClkInitStruct.AHBCLKDivider  = RCC_SYSCLK_DIV1;
+  RCC_ClkInitStruct.APB1CLKDivider = RCC_HCLK_DIV1;
+  RCC_ClkInitStruct.APB2CLKDivider = RCC_HCLK_DIV1;
+  if (HAL_RCC_ClockConfig(&RCC_ClkInitStruct, FLASH_LATENCY_0) != HAL_OK) {
+    Error_Handler();
+  }
+}
+
+/* ==== Generic error handler ==== */
+void Error_Handler(void)
+{
+  __disable_irq();
+  while (1) {
+    /* stay here */
+  }
+}

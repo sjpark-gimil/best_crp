@@ -1,0 +1,133 @@
+/* ==== main.c : shotgun PING on USART2 (PA2/PA3) and USART1 (PA9/PA10) ==== */
+#include "main.h"
+#include "gpio.h"
+#include "usart.h"    // provides MX_USART2_UART_Init() and huart2 from Cube
+#include <string.h>
+#include <stdio.h>
+#include <stdint.h>
+
+/* -------- Config -------- */
+#define BAUD 9600  /* Try 9600 first. If no output, change to 115200 and reflash. */
+
+/* -------- Handles -------- */
+/* huart2 comes from Cube/usart.c */
+extern UART_HandleTypeDef huart2;
+
+/* We'll create a local USART1 here without touching CubeMX */
+static UART_HandleTypeDef huart1;
+
+/* -------- Prototypes -------- */
+void SystemClock_Config(void);
+void Error_Handler(void);
+
+/* -------- USART1 init on PA9/PA10 --------
+   PA9  = USART1_TX (AF7)
+   PA10 = USART1_RX (AF7) */
+static void Local_USART1_Init(uint32_t baud)
+{
+  /* GPIOA clock for PA9/PA10 */
+  __HAL_RCC_GPIOA_CLK_ENABLE();
+
+  /* USART1 clock */
+  __HAL_RCC_USART1_CLK_ENABLE();
+
+  GPIO_InitTypeDef GPIO_InitStruct = {0};
+
+  /* TX: PA9, RX: PA10, AF7 */
+  GPIO_InitStruct.Pin       = GPIO_PIN_9 | GPIO_PIN_10;
+  GPIO_InitStruct.Mode      = GPIO_MODE_AF_PP;
+  GPIO_InitStruct.Pull      = GPIO_NOPULL;
+  GPIO_InitStruct.Speed     = GPIO_SPEED_FREQ_LOW;
+  GPIO_InitStruct.Alternate = GPIO_AF7_USART1;
+  HAL_GPIO_Init(GPIOA, &GPIO_InitStruct);
+
+  /* HAL UART init */
+  huart1.Instance          = USART1;
+  huart1.Init.BaudRate     = baud;
+  huart1.Init.WordLength   = UART_WORDLENGTH_8B;
+  huart1.Init.StopBits     = UART_STOPBITS_1;
+  huart1.Init.Parity       = UART_PARITY_NONE;
+  huart1.Init.Mode         = UART_MODE_TX_RX;
+  huart1.Init.HwFlowCtl    = UART_HWCONTROL_NONE;
+  huart1.Init.OverSampling = UART_OVERSAMPLING_16;
+  if (HAL_UART_Init(&huart1) != HAL_OK) {
+    Error_Handler();
+  }
+}
+
+/* -------- tiny helpers -------- */
+static void tx2(const char *s) {
+  (void)HAL_UART_Transmit(&huart2, (uint8_t*)s, (uint16_t)strlen(s), 200);
+}
+static void tx1(const char *s) {
+  (void)HAL_UART_Transmit(&huart1, (uint8_t*)s, (uint16_t)strlen(s), 200);
+}
+
+/* ---------------- Main ---------------- */
+int main(void)
+{
+  HAL_Init();
+  SystemClock_Config();
+  MX_GPIO_Init();
+
+  /* USART2 (PA2/PA3) from CubeMX */
+  MX_USART2_UART_Init();
+  /* Force its baud to our test BAUD (in case Cube had another) */
+  huart2.Init.BaudRate = BAUD;
+  (void)HAL_UART_DeInit(&huart2);
+  if (HAL_UART_Init(&huart2) != HAL_OK) {
+    Error_Handler();
+  }
+
+  /* USART1 (PA9/PA10) local init */
+  Local_USART1_Init(BAUD);
+
+  uint32_t n = 0;
+  for (;;)
+  {
+    char line[48];
+    snprintf(line, sizeof line, "P2: PING %lu\r\n", (unsigned long)++n);
+    tx2(line);
+    snprintf(line, sizeof line, "P1: PING %lu\r\n", (unsigned long)n);
+    tx1(line);
+
+    HAL_Delay(1000);
+  }
+}
+
+/* --------- Minimal MSI clock (~2.1 MHz) ---------- */
+void SystemClock_Config(void)
+{
+  RCC_OscInitTypeDef RCC_OscInitStruct = {0};
+  RCC_ClkInitTypeDef RCC_ClkInitStruct = {0};
+
+  __HAL_PWR_VOLTAGESCALING_CONFIG(PWR_REGULATOR_VOLTAGE_SCALE1);
+
+  RCC_OscInitStruct.OscillatorType      = RCC_OSCILLATORTYPE_MSI;
+  RCC_OscInitStruct.MSIState            = RCC_MSI_ON;
+  RCC_OscInitStruct.MSICalibrationValue = 0;
+  RCC_OscInitStruct.MSIClockRange       = RCC_MSIRANGE_5; /* ~2.097 MHz */
+  RCC_OscInitStruct.PLL.PLLState        = RCC_PLL_NONE;
+  if (HAL_RCC_OscConfig(&RCC_OscInitStruct) != HAL_OK) {
+    Error_Handler();
+  }
+
+  RCC_ClkInitStruct.ClockType      = RCC_CLOCKTYPE_HCLK | RCC_CLOCKTYPE_SYSCLK |
+                                     RCC_CLOCKTYPE_PCLK1 | RCC_CLOCKTYPE_PCLK2;
+  RCC_ClkInitStruct.SYSCLKSource   = RCC_SYSCLKSOURCE_MSI;
+  RCC_ClkInitStruct.AHBCLKDivider  = RCC_SYSCLK_DIV1;
+  RCC_ClkInitStruct.APB1CLKDivider = RCC_HCLK_DIV1;
+  RCC_ClkInitStruct.APB2CLKDivider = RCC_HCLK_DIV1;
+
+  if (HAL_RCC_ClockConfig(&RCC_ClkInitStruct, FLASH_LATENCY_0) != HAL_OK) {
+    Error_Handler();
+  }
+}
+
+/* --------- Simple error handler ---------- */
+void Error_Handler(void)
+{
+  __disable_irq();
+  while (1) { }
+}
+

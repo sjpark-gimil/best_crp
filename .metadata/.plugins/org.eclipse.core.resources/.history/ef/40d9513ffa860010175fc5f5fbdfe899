@@ -1,0 +1,75 @@
+
+#include "main.h"
+#include "usart.h"
+#include "gpio.h"
+#include <stdint.h>
+
+/* Prototypes */
+void SystemClock_Config(void);
+void Error_Handler(void);
+
+/* From usart.c */
+extern UART_HandleTypeDef huart2;
+
+/* ---------------- Main ---------------- */
+int main(void)
+{
+  HAL_Init();
+  SystemClock_Config();
+  MX_GPIO_Init();
+  MX_USART2_UART_Init();
+
+  /* --- UART2 loopback self-test (PA2 tied to PA3).
+     If module is still connected, the receive may not trigger. --- */
+  uint8_t tx = 0x55;     /* 01010101 pattern */
+  uint8_t rx = 0x00;
+
+  for (;;)
+  {
+    (void)HAL_UART_Transmit(&huart2, &tx, 1, 100);
+
+    if (HAL_UART_Receive(&huart2, &rx, 1, 100) == HAL_OK) {
+      volatile uint8_t seen = rx;  /* Watch in debugger */
+      __NOP();                     /* <-- set a BREAKPOINT here */
+    }
+
+    HAL_Delay(100);
+  }
+}
+
+/* ==== Simple MSI clock setup (~2.1 MHz) ==== */
+void SystemClock_Config(void)
+{
+  RCC_OscInitTypeDef RCC_OscInitStruct = {0};
+  RCC_ClkInitTypeDef RCC_ClkInitStruct = {0};
+
+  __HAL_PWR_VOLTAGESCALING_CONFIG(PWR_REGULATOR_VOLTAGE_SCALE1);
+
+  RCC_OscInitStruct.OscillatorType      = RCC_OSCILLATORTYPE_MSI;
+  RCC_OscInitStruct.MSIState            = RCC_MSI_ON;
+  RCC_OscInitStruct.MSICalibrationValue = 0;
+  RCC_OscInitStruct.MSIClockRange       = RCC_MSIRANGE_5;  /* ~2.097 MHz */
+  RCC_OscInitStruct.PLL.PLLState        = RCC_PLL_NONE;
+  if (HAL_RCC_OscConfig(&RCC_OscInitStruct) != HAL_OK) {
+    Error_Handler();
+  }
+
+  RCC_ClkInitStruct.ClockType      = RCC_CLOCKTYPE_HCLK | RCC_CLOCKTYPE_SYSCLK
+                                   | RCC_CLOCKTYPE_PCLK1| RCC_CLOCKTYPE_PCLK2;
+  RCC_ClkInitStruct.SYSCLKSource   = RCC_SYSCLKSOURCE_MSI;
+  RCC_ClkInitStruct.AHBCLKDivider  = RCC_SYSCLK_DIV1;
+  RCC_ClkInitStruct.APB1CLKDivider = RCC_HCLK_DIV1;
+  RCC_ClkInitStruct.APB2CLKDivider = RCC_HCLK_DIV1;
+  if (HAL_RCC_ClockConfig(&RCC_ClkInitStruct, FLASH_LATENCY_0) != HAL_OK) {
+    Error_Handler();
+  }
+}
+
+/* ==== Generic error handler ==== */
+void Error_Handler(void)
+{
+  __disable_irq();
+  while (1) {
+    /* stay here */
+  }
+}

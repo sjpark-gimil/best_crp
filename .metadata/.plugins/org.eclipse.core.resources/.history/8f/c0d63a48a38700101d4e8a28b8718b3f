@@ -1,0 +1,189 @@
+#include "main.h"
+#include "usart.h"
+#include "gpio.h"
+
+#include <string.h>
+#include <stdbool.h>
+#include <stdint.h>
+
+/* ========= User options ========= */
+#define USE_SWV_LOG     1          // 1 = log to SWV/ITM console, 0 = silence
+#define CMD_GET_STATUS  0x01       // <-- change to your real “get status” command
+/* ================================= */
+
+/* If your hardware exposes a STATE pin you can read it here (optional) */
+// #define BLE_STATE_PORT  GPIOB
+// #define BLE_STATE_PIN   GPIO_PIN_0
+
+void SystemClock_Config(void);
+
+/* ====== Globals from Cube ====== */
+extern UART_HandleTypeDef huart2;
+
+/* ========= Tiny logger (SWV/ITM) =========
+   View in CubeIDE: Open "SWV" (or "SWV ITM Data Console"), add Port 0, Start trace.
+   If you don’t want logs, set USE_SWV_LOG = 0 above.
+*/
+#if USE_SWV_LOG
+#include "core_cm3.h"
+static inline void ITM_SendString(const char *s)
+{
+    while (*s) {
+        // Wait until stimulus port 0 ready
+        if (ITM->TCR & ITM_TCR_ITMENA_Msk) {
+            if (ITM->TER & (1UL << 0)) {
+                while (ITM->PORT[0].u32 == 0) { __NOP(); }
+                ITM->PORT[0].u8 = (uint8_t)*s;
+            }
+        }
+        s++;
+    }
+}
+#else
+static inline void ITM_SendString(const char *s) { (void)s; }
+#endif
+/* ========================================= */
+
+/* ================= Protocol helpers =================
+   Frame: [STX=0xFE][BC][CMD][DATA...][FCC]
+   FCC is XOR of all previous bytes (STX ^ BC ^ CMD ^ DATA..)
+*/
+static uint8_t xor_fcc(const uint8_t *buf, int len)
+{
+    uint8_t f = 0;
+    for (int i = 0; i < len; i++) f ^= buf[i];
+    return f;
+}
+
+/* Send one command frame */
+static bool BLE_SendCommand(uint8_t cmd, const uint8_t *data, uint8_t datalen)
+{
+    uint8_t buf[64];
+    int idx = 0;
+
+    if (datalen > (uint8_t)(sizeof(buf) - 4)) return false;
+
+    buf[idx++] = 0xFE;                     // STX
+    buf[idx++] = (uint8_t)(1 + datalen + 1); // BC = CMD + DATA + FCC
+    buf[idx++] = cmd;                      // CMD
+    if (datalen && data) {
+        memcpy(&buf[idx], data, datalen);
+        idx += datalen;
+    }
+    buf[idx] = xor_fcc(buf, idx);          // FCC over all previous bytes
+
+    return (HAL_UART_Transmit(&huart2, buf, (uint16_t)(idx + 1), 200) == HAL_OK);
+}
+
+/* Receive one frame (blocking)
+   Returns DATA length (>=0) on success, negative on error.
+   On success: *out_cmd = CMD, data[0..len-1] = DATA bytes
+*/
+static int BLE_ReadResponse(uint8_t *out_cmd, uint8_t *data, int maxdata, uint32_t timeout_ms)
+{
+    uint8_t stx = 0, bc = 0;
+
+    if (HAL_UART_Receive(&huart2, &stx, 1, timeout_ms) != HAL_OK) return -1;
+    if (stx != 0xFE) return -2;
+
+    if (HAL_UART_Receive(&huart2, &bc, 1, timeout_ms) != HAL_OK) return -3;
+    if (bc < 2) return -4; // at least CMD + FCC
+
+    uint8_t tail[64];
+    if (bc > sizeof(tail)) return -5;
+    if (HAL_UART_Receive(&huart2, tail, bc, timeout_ms) != HAL_OK) return -6;
+
+    /* verify FCC */
+    uint8_t fcc_calc = 0;
+    fcc_calc ^= stx;
+    fcc_calc ^= bc;
+    for (int i = 0; i < bc - 1; ++i) fcc_calc ^= tail[i];
+
+    uint8_t fcc_rx = tail[bc - 1];
+    if (fcc_calc != fcc_rx) return -7;
+
+    if (out_cmd) *out_cmd = tail[0];
+    int datalen = bc - 2; // exclude CMD + FCC
+    if (datalen > maxdata) datalen = maxdata;
+    if (datalen > 0 && data) memcpy(data, &tail[1], datalen);
+
+    return datalen;
+}
+/* ==================================================== */
+
+/* ---------------- Main ---------------- */
+int main(void)
+{
+    HAL_Init();
+    SystemClock_Config();
+    MX_GPIO_Init();
+    MX_USART2_UART_Init();
+
+#if USE_SWV_LOG
+    ITM_SendString("\r\n[BLE] Boot.\r\n");
+#endif
+
+    uint8_t rx[64];
+    uint8_t cmd;
+    int len;
+
+    for (;;)
+    {
+        /* Ask module for status */
+        (void)BLE_SendCommand(CMD_GET_STATUS, NULL, 0);
+
+        /* Try to read a reply */
+        len = BLE_ReadResponse(&cmd, rx, sizeof(rx), 800);
+
+        bool connected = false;
+
+        if (len > 0) {
+            /* Per your spec/note: 'A' = connected, 'a' = not connected.
+               If your real status encoding differs, adjust below. */
+            if (rx[0] == 'A') connected = true;
+            else if (rx[0] == 'a') connected = false;
+        }
+
+        /* Optional log to SWV console */
+#if USE_SWV_LOG
+        if (connected)  ITM_SendString("[BLE] Connected\r\n");
+        else            ITM_SendString("[BLE] Not connected\r\n");
+#endif
+
+        /* >>> Use `connected` in your app logic here <<< */
+
+        HAL_Delay(500);
+    }
+}
+
+/* ==== Simple MSI clock setup (~2.1 MHz) ==== */
+void SystemClock_Config(void)
+{
+  RCC_OscInitTypeDef RCC_OscInitStruct = {0};
+  RCC_ClkInitTypeDef RCC_ClkInitStruct = {0};
+
+  __HAL_PWR_VOLTAGESCALING_CONFIG(PWR_REGULATOR_VOLTAGE_SCALE1);
+
+  RCC_OscInitStruct.OscillatorType = RCC_OSCILLATORTYPE_MSI;
+  RCC_OscInitStruct.MSIState = RCC_MSI_ON;
+  RCC_OscInitStruct.MSICalibrationValue = 0;
+  RCC_OscInitStruct.MSIClockRange = RCC_MSIRANGE_5; // ~2.097 MHz
+  RCC_OscInitStruct.PLL.PLLState = RCC_PLL_NONE;
+  if (HAL_RCC_OscConfig(&RCC_OscInitStruct) != HAL_OK) { Error_Handler(); }
+
+  RCC_ClkInitStruct.ClockType = RCC_CLOCKTYPE_HCLK | RCC_CLOCKTYPE_SYSCLK
+                              | RCC_CLOCKTYPE_PCLK1 | RCC_CLOCKTYPE_PCLK2;
+  RCC_ClkInitStruct.SYSCLKSource   = RCC_SYSCLKSOURCE_MSI;
+  RCC_ClkInitStruct.AHBCLKDivider  = RCC_SYSCLK_DIV1;
+  RCC_ClkInitStruct.APB1CLKDivider = RCC_HCLK_DIV1;
+  RCC_ClkInitStruct.APB2CLKDivider = RCC_HCLK_DIV1;
+
+  if (HAL_RCC_ClockConfig(&RCC_ClkInitStruct, FLASH_LATENCY_0) != HAL_OK) { Error_Handler(); }
+}
+
+void Error_Handler(void)
+{
+  __disable_irq();
+  while (1) { }
+}
+

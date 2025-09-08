@@ -1,0 +1,120 @@
+
+#include "main.h"
+#include "usart.h"
+#include "gpio.h"
+#include <string.h>
+#include <stdbool.h>
+
+/* Prototypes */
+void SystemClock_Config(void);
+void Error_Handler(void);
+
+/* From usart.c */
+extern UART_HandleTypeDef huart2;
+
+void SystemClock_Config(void);
+extern UART_HandleTypeDef huart2;
+
+static uint8_t calc_fcc(const uint8_t *buf, int len) {
+    uint8_t f = 0;
+    for (int i = 0; i < len; i++) f ^= buf[i];
+    return f;
+}
+
+
+bool BLE_SendCommand(uint8_t cmd, const uint8_t *data, uint8_t datalen) {
+    uint8_t buf[64];
+    int idx = 0;
+    if (datalen > (uint8_t)(sizeof(buf) - 4)) return false;
+
+    buf[idx++] = 0xFE;                   // STX
+    buf[idx++] = 1 + datalen + 1;        // BC = CMD + DATA + FCC
+    buf[idx++] = cmd;                    // CMD
+    if (datalen && data) { memcpy(&buf[idx], data, datalen); idx += datalen; }
+    buf[idx] = calc_fcc(buf, idx);       // FCC over prior bytes
+
+    return (HAL_UART_Transmit(&huart2, buf, (uint16_t)(idx + 1), 200) == HAL_OK);
+}
+
+/* --- Read one frame; returns DATA length, <0 on error --- */
+int BLE_ReadResponse(uint8_t *out_cmd, uint8_t *data, int maxdata, uint32_t timeout_ms) {
+    uint8_t stx = 0, bc = 0;
+    if (HAL_UART_Receive(&huart2, &stx, 1, timeout_ms) != HAL_OK) return -1;
+    if (stx != 0xFE) return -2;
+    if (HAL_UART_Receive(&huart2, &bc, 1, timeout_ms) != HAL_OK) return -3;
+    if (bc < 2 || bc > 63) return -4;
+
+    uint8_t tail[64];
+    if (HAL_UART_Receive(&huart2, tail, bc, timeout_ms) != HAL_OK) return -5;
+
+    uint8_t fcc_rx = tail[bc - 1];
+    uint8_t fcc = stx ^ bc;
+    for (int i = 0; i < bc - 1; ++i) fcc ^= tail[i];
+    if (fcc != fcc_rx) return -6;
+
+    if (out_cmd) *out_cmd = tail[0];
+    int datalen = bc - 2;                      // exclude CMD + FCC
+    if (datalen > maxdata) datalen = maxdata;
+    if (datalen > 0 && data) memcpy(data, &tail[1], datalen);
+    return datalen;
+}
+/* ---------------- Main ---------------- */
+int main(void)
+{
+  HAL_Init();
+  SystemClock_Config();
+  MX_GPIO_Init();
+  MX_USART2_UART_Init();
+
+  /* UART echo self-test: PA2 (TX2) -> PA3 (RX2) */
+  uint8_t tx = 0x55, rx = 0;
+
+  for (;;)
+  {
+      uint8_t b;
+      if (HAL_UART_Receive(&huart2, &b, 1, 2000) == HAL_OK) {
+          volatile uint8_t got = b;   // look at 'got' in the Variables view
+          __BKPT(0);                  // debugger will HALT here on ANY byte
+      }
+  }
+
+ /* <-- closes the for(;;) loop */
+}   /* <-- close
+
+
+/* ==== Simple MSI clock setup (~2.1 MHz) ==== */
+void SystemClock_Config(void)
+{
+  RCC_OscInitTypeDef RCC_OscInitStruct = {0};
+  RCC_ClkInitTypeDef RCC_ClkInitStruct = {0};
+
+  __HAL_PWR_VOLTAGESCALING_CONFIG(PWR_REGULATOR_VOLTAGE_SCALE1);
+
+  RCC_OscInitStruct.OscillatorType      = RCC_OSCILLATORTYPE_MSI;
+  RCC_OscInitStruct.MSIState            = RCC_MSI_ON;
+  RCC_OscInitStruct.MSICalibrationValue = 0;
+  RCC_OscInitStruct.MSIClockRange       = RCC_MSIRANGE_5;  /* ~2.097 MHz */
+  RCC_OscInitStruct.PLL.PLLState        = RCC_PLL_NONE;
+  if (HAL_RCC_OscConfig(&RCC_OscInitStruct) != HAL_OK) {
+    Error_Handler();
+  }
+
+  RCC_ClkInitStruct.ClockType      = RCC_CLOCKTYPE_HCLK | RCC_CLOCKTYPE_SYSCLK
+                                   | RCC_CLOCKTYPE_PCLK1| RCC_CLOCKTYPE_PCLK2;
+  RCC_ClkInitStruct.SYSCLKSource   = RCC_SYSCLKSOURCE_MSI;
+  RCC_ClkInitStruct.AHBCLKDivider  = RCC_SYSCLK_DIV1;
+  RCC_ClkInitStruct.APB1CLKDivider = RCC_HCLK_DIV1;
+  RCC_ClkInitStruct.APB2CLKDivider = RCC_HCLK_DIV1;
+  if (HAL_RCC_ClockConfig(&RCC_ClkInitStruct, FLASH_LATENCY_0) != HAL_OK) {
+    Error_Handler();
+  }
+}
+
+/* ==== Generic error handler ==== */
+void Error_Handler(void)
+{
+  __disable_irq();
+  while (1) {
+    /* stay here */
+  }
+}

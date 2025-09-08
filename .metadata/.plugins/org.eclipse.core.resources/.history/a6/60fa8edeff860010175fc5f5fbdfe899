@@ -1,0 +1,87 @@
+
+#include "main.h"
+#include "usart.h"
+#include "gpio.h"
+#include <stdint.h>
+
+/* Prototypes */
+void SystemClock_Config(void);
+void Error_Handler(void);
+
+/* From usart.c */
+extern UART_HandleTypeDef huart2;
+
+void SystemClock_Config(void);
+extern UART_HandleTypeDef huart2;
+
+/* ---------------- Main ---------------- */
+int main(void)
+{
+  HAL_Init();
+  SystemClock_Config();
+  MX_GPIO_Init();
+  MX_USART2_UART_Init();
+
+  /* UART echo self-test: PA2 (TX2) -> PA3 (RX2) */
+  uint8_t tx = 0x55, rx = 0;
+
+  for (;;)
+  {
+      uint8_t cmd = 0;
+      uint8_t data[8];
+      int len;
+
+      // send "status" (change 0x01 if your spec says a different ID)
+      (void)BLE_SendCommand(0x01, NULL, 0);
+
+      // wait up to 1000 ms for a frame back
+      len = BLE_ReadResponse(&cmd, data, sizeof(data), 1000);
+
+      if (len > 0) {
+          // stop here so you can read what we got
+          volatile uint8_t first = data[0];  // <- we’ll inspect 'first'
+          __BKPT(0);                         // debugger will HALT here
+      }
+
+      HAL_Delay(500);
+  }
+ /* <-- closes the for(;;) loop */
+}   /* <-- close
+
+
+/* ==== Simple MSI clock setup (~2.1 MHz) ==== */
+void SystemClock_Config(void)
+{
+  RCC_OscInitTypeDef RCC_OscInitStruct = {0};
+  RCC_ClkInitTypeDef RCC_ClkInitStruct = {0};
+
+  __HAL_PWR_VOLTAGESCALING_CONFIG(PWR_REGULATOR_VOLTAGE_SCALE1);
+
+  RCC_OscInitStruct.OscillatorType      = RCC_OSCILLATORTYPE_MSI;
+  RCC_OscInitStruct.MSIState            = RCC_MSI_ON;
+  RCC_OscInitStruct.MSICalibrationValue = 0;
+  RCC_OscInitStruct.MSIClockRange       = RCC_MSIRANGE_5;  /* ~2.097 MHz */
+  RCC_OscInitStruct.PLL.PLLState        = RCC_PLL_NONE;
+  if (HAL_RCC_OscConfig(&RCC_OscInitStruct) != HAL_OK) {
+    Error_Handler();
+  }
+
+  RCC_ClkInitStruct.ClockType      = RCC_CLOCKTYPE_HCLK | RCC_CLOCKTYPE_SYSCLK
+                                   | RCC_CLOCKTYPE_PCLK1| RCC_CLOCKTYPE_PCLK2;
+  RCC_ClkInitStruct.SYSCLKSource   = RCC_SYSCLKSOURCE_MSI;
+  RCC_ClkInitStruct.AHBCLKDivider  = RCC_SYSCLK_DIV1;
+  RCC_ClkInitStruct.APB1CLKDivider = RCC_HCLK_DIV1;
+  RCC_ClkInitStruct.APB2CLKDivider = RCC_HCLK_DIV1;
+  if (HAL_RCC_ClockConfig(&RCC_ClkInitStruct, FLASH_LATENCY_0) != HAL_OK) {
+    Error_Handler();
+  }
+}
+
+/* ==== Generic error handler ==== */
+void Error_Handler(void)
+{
+  __disable_irq();
+  while (1) {
+    /* stay here */
+  }
+}

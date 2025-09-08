@@ -1,0 +1,186 @@
+/* ==== PN532 presence check over I2C (STM32L100C6) ==== */
+#include "stm32l1xx_hal.h"
+#include <string.h>
+#include <stdbool.h>
+#include <stdint.h>
+
+/* ---------- Globals ---------- */
+I2C_HandleTypeDef hi2c1;
+I2C_HandleTypeDef hi2c2;
+
+/* Results you will watch in debugger */
+static volatile uint8_t  g_found_any   = 0;
+static volatile uint8_t  g_found_bus   = 0;   // 1=I2C1, 2=I2C2
+static volatile uint8_t  g_found_addr  = 0;   // e.g. 0x24 for PN532
+static volatile uint8_t  g_bus1_bitmap[16];   // 128 bits -> addr 0x00..0x7F
+static volatile uint8_t  g_bus2_bitmap[16];
+static volatile uint8_t  g_bus1_hits   = 0;
+static volatile uint8_t  g_bus2_hits   = 0;
+
+/* ---------- Prototypes ---------- */
+static void SystemClock_Config(void);
+static void Error_Handler(void);
+static void GPIO_Clock_Enable_All(void);
+static void I2C_Pins_Init(void);
+static void I2C1_Init_100k(void);
+static void I2C2_Init_100k(void);
+static uint8_t i2c_scan_bus(I2C_HandleTypeDef *hi2c, volatile uint8_t *bitmap, volatile uint8_t *hits);
+
+/* ---------- Minimal delay hook ---------- */
+void SysTick_Handler(void) { HAL_IncTick(); }
+
+/* ===================================================== */
+int main(void)
+{
+  HAL_Init();
+  SystemClock_Config();
+  GPIO_Clock_Enable_All();   // Enable GPIO clocks we need
+  I2C_Pins_Init();           // Configure PB6/PB7 and PB10/PB11 as I2C
+
+  I2C1_Init_100k();
+  I2C2_Init_100k();
+
+  /* Clear bitmaps */
+  memset((void*)g_bus1_bitmap, 0, sizeof g_bus1_bitmap);
+  memset((void*)g_bus2_bitmap, 0, sizeof g_bus2_bitmap);
+  g_bus1_hits = g_bus2_hits = 0;
+
+  /* Scan both buses */
+  uint8_t pn_on_bus1 = i2c_scan_bus(&hi2c1, g_bus1_bitmap, &g_bus1_hits);
+  uint8_t pn_on_bus2 = i2c_scan_bus(&hi2c2, g_bus2_bitmap, &g_bus2_hits);
+
+  /* Summarize */
+  g_found_any = (g_bus1_hits || g_bus2_hits) ? 1 : 0;
+
+  if (pn_on_bus1) { g_found_bus = 1; g_found_addr = 0x24; }
+  else if (pn_on_bus2) { g_found_bus = 2; g_found_addr = 0x24; }
+  else { g_found_bus = 0; g_found_addr = 0; }
+
+  /* === Put a breakpoint here === */
+  __BKPT(0);
+
+  /* Idle forever (no further code runs after your inspection) */
+  while (1) { HAL_Delay(1000); }
+}
+
+/* ===================================================== */
+/* Configure clocks: MSI ~2.1 MHz, simple and robust     */
+static void SystemClock_Config(void)
+{
+  RCC_OscInitTypeDef RCC_OscInitStruct = {0};
+  RCC_ClkInitTypeDef RCC_ClkInitStruct = {0};
+
+  __HAL_RCC_PWR_CLK_ENABLE();
+  __HAL_PWR_VOLTAGESCALING_CONFIG(PWR_REGULATOR_VOLTAGE_SCALE1);
+
+  RCC_OscInitStruct.OscillatorType = RCC_OSCILLATORTYPE_MSI;
+  RCC_OscInitStruct.MSIState = RCC_MSI_ON;
+  RCC_OscInitStruct.MSICalibrationValue = 0;
+  RCC_OscInitStruct.MSIClockRange = RCC_MSIRANGE_5; // ~2.097 MHz
+  RCC_OscInitStruct.PLL.PLLState = RCC_PLL_NONE;
+  if (HAL_RCC_OscConfig(&RCC_OscInitStruct) != HAL_OK) Error_Handler();
+
+  RCC_ClkInitStruct.ClockType = RCC_CLOCKTYPE_HCLK | RCC_CLOCKTYPE_SYSCLK
+                              | RCC_CLOCKTYPE_PCLK1 | RCC_CLOCKTYPE_PCLK2;
+  RCC_ClkInitStruct.SYSCLKSource = RCC_SYSCLKSOURCE_MSI;
+  RCC_ClkInitStruct.AHBCLKDivider = RCC_SYSCLK_DIV1;
+  RCC_ClkInitStruct.APB1CLKDivider = RCC_HCLK_DIV1;
+  RCC_ClkInitStruct.APB2CLKDivider = RCC_HCLK_DIV1;
+  if (HAL_RCC_ClockConfig(&RCC_ClkInitStruct, FLASH_LATENCY_0) != HAL_OK) Error_Handler();
+
+  /* 1ms tick */
+  HAL_SYSTICK_Config(HAL_RCC_GetHCLKFreq()/1000);
+  HAL_SYSTICK_CLKSourceConfig(SYSTICK_CLKSOURCE_HCLK);
+  HAL_NVIC_SetPriority(SysTick_IRQn, 0, 0);
+}
+
+/* Enable all GPIO port clocks we touch (A/B) */
+static void GPIO_Clock_Enable_All(void)
+{
+  __HAL_RCC_GPIOA_CLK_ENABLE();
+  __HAL_RCC_GPIOB_CLK_ENABLE();
+}
+
+/* Set PB6=SCL1, PB7=SDA1, PB10=SCL2, PB11=SDA2 to I2C AF4, open-drain */
+static void I2C_Pins_Init(void)
+{
+  GPIO_InitTypeDef GPIO_InitStruct = {0};
+
+  /* I2C1: PB6 SCL, PB7 SDA */
+  GPIO_InitStruct.Pin = GPIO_PIN_6 | GPIO_PIN_7;
+  GPIO_InitStruct.Mode = GPIO_MODE_AF_OD;
+  GPIO_InitStruct.Pull = GPIO_NOPULL;      // assume external pull-ups on board
+  GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_VERY_HIGH;
+  GPIO_InitStruct.Alternate = GPIO_AF4_I2C1;
+  HAL_GPIO_Init(GPIOB, &GPIO_InitStruct);
+
+  /* I2C2: PB10 SCL, PB11 SDA */
+  GPIO_InitStruct.Pin = GPIO_PIN_10 | GPIO_PIN_11;
+  GPIO_InitStruct.Mode = GPIO_MODE_AF_OD;
+  GPIO_InitStruct.Pull = GPIO_NOPULL;      // assume external pull-ups on board
+  GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_VERY_HIGH;
+  GPIO_InitStruct.Alternate = GPIO_AF4_I2C2;
+  HAL_GPIO_Init(GPIOB, &GPIO_InitStruct);
+}
+
+/* Init I2C1 @100kHz */
+static void I2C1_Init_100k(void)
+{
+  __HAL_RCC_I2C1_CLK_ENABLE();
+
+  hi2c1.Instance = I2C1;
+  hi2c1.Init.ClockSpeed = 100000;
+  hi2c1.Init.DutyCycle = I2C_DUTYCYCLE_2;
+  hi2c1.Init.OwnAddress1 = 0;
+  hi2c1.Init.AddressingMode = I2C_ADDRESSINGMODE_7BIT;
+  hi2c1.Init.DualAddressMode = I2C_DUALADDRESS_DISABLE;
+  hi2c1.Init.OwnAddress2 = 0;
+  hi2c1.Init.GeneralCallMode = I2C_GENERALCALL_DISABLE;
+  hi2c1.Init.NoStretchMode = I2C_NOSTRETCH_DISABLE;
+
+  if (HAL_I2C_Init(&hi2c1) != HAL_OK) Error_Handler();
+}
+
+/* Init I2C2 @100kHz */
+static void I2C2_Init_100k(void)
+{
+  __HAL_RCC_I2C2_CLK_ENABLE();
+
+  hi2c2.Instance = I2C2;
+  hi2c2.Init.ClockSpeed = 100000;
+  hi2c2.Init.DutyCycle = I2C_DUTYCYCLE_2;
+  hi2c2.Init.OwnAddress1 = 0;
+  hi2c2.Init.AddressingMode = I2C_ADDRESSINGMODE_7BIT;
+  hi2c2.Init.DualAddressMode = I2C_DUALADDRESS_DISABLE;
+  hi2c2.Init.OwnAddress2 = 0;
+  hi2c2.Init.GeneralCallMode = I2C_GENERALCALL_DISABLE;
+  hi2c2.Init.NoStretchMode = I2C_NOSTRETCH_DISABLE;
+
+  if (HAL_I2C_Init(&hi2c2) != HAL_OK) Error_Handler();
+}
+
+/* Scan helper: fills bitmap (1 bit per addr), counts hits, returns 1 if PN532 (0x24) seen */
+static uint8_t i2c_scan_bus(I2C_HandleTypeDef *hi2c, volatile uint8_t *bitmap, volatile uint8_t *hits)
+{
+  uint8_t pn_seen = 0;
+  *hits = 0;
+
+  for (uint8_t addr = 0; addr <= 0x7F; addr++)
+  {
+    if (HAL_I2C_IsDeviceReady(hi2c, (uint16_t)(addr << 1), 2, 5) == HAL_OK)
+    {
+      bitmap[addr >> 3] |= (uint8_t)(1u << (addr & 7));
+      (*hits)++;
+      if (addr == 0x24) pn_seen = 1;  // PN532 default 7-bit I2C address
+      HAL_Delay(1);
+    }
+  }
+  return pn_seen;
+}
+
+/* ---------- Error handler ---------- */
+static void Error_Handler(void)
+{
+  __disable_irq();
+  while (1) { /* hang here so you can see it in debugger */ }
+}

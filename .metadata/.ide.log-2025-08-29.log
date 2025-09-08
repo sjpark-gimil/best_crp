@@ -1,0 +1,40 @@
+2025-08-29 10:31:04,666 [INFO] UtilMem:75 - End SaveConfig() Used Memory: 747170856 Bytes (1073741824)
+2025-08-29 10:31:08,107 [INFO] UtilMem:75 - End SaveConfig() Used Memory: 792391016 Bytes (1073741824)
+2025-08-29 10:31:11,049 [INFO] UtilMem:75 - End SaveConfig() Used Memory: 850322040 Bytes (1073741824)
+2025-08-29 10:31:11,295 [INFO] BlockDiagram:2775 - set Specific Code input for plugin: NVIC
+2025-08-29 10:31:11,296 [INFO] BlockDiagram:2775 - set Specific Code input for plugin: USART
+2025-08-29 10:31:11,296 [INFO] BlockDiagram:2775 - set Specific Code input for plugin: SYS
+2025-08-29 10:31:11,296 [INFO] BlockDiagram:2775 - set Specific Code input for plugin: GPIO
+2025-08-29 10:31:11,296 [INFO] BlockDiagram:2775 - set Specific Code input for plugin: RCC
+2025-08-29 10:31:11,297 [INFO] CodeGenerator:892 - code generatio: config db path: C:\ST\STM32CubeIDE_1.19.0\STM32CubeIDE\plugins\com.st.stm32cube.common.mx_6.15.0.202507011659\\db\
+2025-08-29 10:31:11,367 [INFO] CodeEngine:265 - oldGeneratedFile, C:\Users\mds\STM32CubeIDE\workspace_1.19.0\ble_status_test\MXTmpFiles\license.tmp_save
+2025-08-29 10:31:11,600 [INFO] CodeEngine:289 - Generated code: C:\Users\mds\STM32CubeIDE\workspace_1.19.0\ble_status_test\MXTmpFiles\license.tmp
+2025-08-29 10:31:11,646 [INFO] CodeEngine:265 - oldGeneratedFile, C:\Users\mds\STM32CubeIDE\workspace_1.19.0\ble_status_test\Core\Src\gpio.c_save
+2025-08-29 10:31:11,742 [INFO] CodeEngine:289 - Generated code: C:\Users\mds\STM32CubeIDE\workspace_1.19.0\ble_status_test\Core\Src\gpio.c
+2025-08-29 10:31:11,748 [INFO] CodeEngine:265 - oldGeneratedFile, C:\Users\mds\STM32CubeIDE\workspace_1.19.0\ble_status_test\Core\Inc\gpio.h_save
+2025-08-29 10:31:11,818 [INFO] CodeEngine:289 - Generated code: C:\Users\mds\STM32CubeIDE\workspace_1.19.0\ble_status_test\Core\Inc\gpio.h
+2025-08-29 10:31:11,870 [INFO] CodeEngine:265 - oldGeneratedFile, C:\Users\mds\STM32CubeIDE\workspace_1.19.0\ble_status_test\Core\Src\usart.c_save
+2025-08-29 10:31:12,008 [INFO] CodeEngine:289 - Generated code: C:\Users\mds\STM32CubeIDE\workspace_1.19.0\ble_status_test\Core\Src\usart.c
+2025-08-29 10:31:12,014 [INFO] CodeEngine:265 - oldGeneratedFile, C:\Users\mds\STM32CubeIDE\workspace_1.19.0\ble_status_test\Core\Inc\usart.h_save
+2025-08-29 10:31:12,074 [INFO] CodeEngine:289 - Generated code: C:\Users\mds\STM32CubeIDE\workspace_1.19.0\ble_status_test\Core\Inc\usart.h
+2025-08-29 10:31:12,085 [INFO] CodeEngine:265 - oldGeneratedFile, C:\Users\mds\STM32CubeIDE\workspace_1.19.0\ble_status_test\Core\Src\stm32l1xx_it.c_save
+2025-08-29 10:31:12,257 [INFO] CodeEngine:289 - Generated code: C:\Users\mds\STM32CubeIDE\workspace_1.19.0\ble_status_test\Core\Src\stm32l1xx_it.c
+2025-08-29 10:31:12,263 [INFO] CodeEngine:265 - oldGeneratedFile, C:\Users\mds\STM32CubeIDE\workspace_1.19.0\ble_status_test\Core\Inc\stm32l1xx_it.h_save
+2025-08-29 10:31:12,315 [INFO] CodeEngine:289 - Generated code: C:\Users\mds\STM32CubeIDE\workspace_1.19.0\ble_status_test\Core\Inc\stm32l1xx_it.h
+2025-08-29 10:31:12,325 [INFO] CodeEngine:265 - oldGeneratedFile, C:\Users\mds\STM32CubeIDE\workspace_1.19.0\ble_status_test\Core\Src\stm32l1xx_hal_msp.c_save
+2025-08-29 10:31:12,401 [INFO] CodeEngine:289 - Generated code: C:\Users\mds\STM32CubeIDE\workspace_1.19.0\ble_status_test\Core\Src\stm32l1xx_hal_msp.c
+2025-08-29 10:31:12,406 [INFO] CodeEngine:265 - oldGeneratedFile, C:\Users\mds\STM32CubeIDE\workspace_1.19.0\ble_status_test\MXTmpFiles\system.tmp_save
+2025-08-29 10:31:12,455 [INFO] CodeEngine:289 - Generated code: C:\Users\mds\STM32CubeIDE\workspace_1.19.0\ble_status_test\MXTmpFiles\system.tmp
+2025-08-29 10:31:12,464 [INFO] CodeEngine:321 - oldGeneratedFile, C:\Users\mds\STM32CubeIDE\workspace_1.19.0\ble_status_test\Core\Inc\stm32l1xx_hal_conf.h_save
+2025-08-29 10:31:12,519 [INFO] CodeEngine:345 - Generated code: C:\Users\mds\STM32CubeIDE\workspace_1.19.0\ble_status_test\Core\Inc\stm32l1xx_hal_conf.h
+2025-08-29 10:31:12,532 [INFO] ApiDbMcu:532 - Load IP Config File for USART2
+2025-08-29 10:31:12,539 [INFO] CodeEngine:265 - oldGeneratedFile, C:\Users\mds\STM32CubeIDE\workspace_1.19.0\ble_status_test\Core\Inc\main.h_save
+2025-08-29 10:31:12,614 [INFO] CodeEngine:289 - Generated code: C:\Users\mds\STM32CubeIDE\workspace_1.19.0\ble_status_test\Core\Inc\main.h
+2025-08-29 10:31:12,618 [INFO] CodeEngine:265 - oldGeneratedFile, C:\Users\mds\STM32CubeIDE\workspace_1.19.0\ble_status_test\Core\Src\main.c_save
+2025-08-29 10:31:12,692 [INFO] CodeEngine:289 - Generated code: C:\Users\mds\STM32CubeIDE\workspace_1.19.0\ble_status_test\Core\Src\main.c
+2025-08-29 10:31:12,954 [INFO] ProjectBuilder:3606 - Time for Copy HAL[1] : 100mS.
+2025-08-29 10:31:12,957 [INFO] ProjectBuilder:5216 - Project Generator version: 4.7.0-B52
+2025-08-29 10:31:13,025 [INFO] ConfigFileManager:1595 - The Die is : DIE416
+2025-08-29 10:31:13,873 [INFO] ProjectBuilder:5496 - Time for Generating toolchain IDE Files: 916mS.
+2025-08-29 10:31:13,874 [INFO] ProjectBuilder:3463 - Time for Copy CMSIS : 0mS.
+2025-08-29 10:31:13,876 [INFO] ProjectBuilder:3463 - Time for Copy CMSIS : 0mS.

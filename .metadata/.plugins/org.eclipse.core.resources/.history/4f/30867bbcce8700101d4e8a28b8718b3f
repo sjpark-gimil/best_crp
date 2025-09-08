@@ -1,0 +1,225 @@
+/* ==== main.c (no LEDs, no SWV, self-contained) ==== */
+#include "main.h"
+#include "gpio.h"
+#include "usart.h"
+#include <string.h>
+#include <stdbool.h>
+#include <stdint.h>
+
+/* Cube prototypes */
+void SystemClock_Config(void);
+void Error_Handler(void);
+
+/* We use USART2 created by CubeMX */
+extern UART_HandleTypeDef huart2;
+
+/* ---------------- Small helpers ---------------- */
+
+static void drain_uart(uint32_t ms)
+{
+  uint8_t d;
+  uint32_t t0 = HAL_GetTick();
+  for (;;)
+  {
+    if (HAL_UART_Receive(&huart2, &d, 1, 5) == HAL_OK)
+    {
+      t0 = HAL_GetTick(); // extend while bytes keep arriving
+      continue;
+    }
+    if ((HAL_GetTick() - t0) >= ms) break;
+  }
+}
+
+/* Send command text, read until link is quiet for quiet_ms */
+static uint32_t send_and_read(const char *cmd,
+                              uint8_t *buf, uint32_t bufsz,
+                              uint32_t quiet_ms)
+{
+  // clear
+  for (uint32_t i = 0; i < bufsz; ++i) buf[i] = 0;
+
+  // purge old bytes
+  drain_uart(50);
+
+  // send
+  (void)HAL_UART_Transmit(&huart2, (uint8_t*)cmd, (uint16_t)strlen(cmd), 200);
+
+  // collect
+  uint32_t n = 0;
+  uint32_t t0 = HAL_GetTick();
+  for (;;)
+  {
+    uint8_t b;
+    if (HAL_UART_Receive(&huart2, &b, 1, 5) == HAL_OK)
+    {
+      if (n < bufsz) buf[n++] = b;
+      t0 = HAL_GetTick();
+      continue;
+    }
+    if ((HAL_GetTick() - t0) >= quiet_ms) break;
+  }
+  return n;
+}
+
+static void trim_ascii(char *s)
+{
+  size_t start = 0;
+  while (s[start] == '\r' || s[start] == '\n' || s[start] == ' ' || s[start] == '\t')
+    start++;
+  if (start) memmove(s, s + start, strlen(s + start) + 1);
+
+  size_t len = strlen(s);
+  while (len && (s[len-1] == '\r' || s[len-1] == '\n' || s[len-1] == ' ' || s[len-1] == '\t'))
+    s[--len] = 0;
+}
+
+static bool parse_name_from_reply(const char *rx, char *out, size_t out_sz)
+{
+  if (!out || out_sz == 0) return false;
+  out[0] = 0;
+
+  const char *p = NULL;
+  if ((p = strstr(rx, "NAME")) != NULL)
+  {
+    p = strchr(p, ':');
+    p = p ? p + 1 : rx;
+  }
+  else
+  {
+    p = rx;
+  }
+
+  strncpy(out, p, out_sz - 1);
+  out[out_sz - 1] = 0;
+  trim_ascii(out);
+
+  if (out[0] == 0) return false;
+  if (!strcasecmp(out, "OK")) return false;
+  if (!strncasecmp(out, "OK+", 3)) return false;
+  if (!strncasecmp(out, "POWER", 5)) return false;
+
+  return true;
+}
+
+/* ---------------- Watch variables (see in debugger) --------------- */
+static uint8_t  g_last_rx[128];
+static uint32_t g_last_len = 0;
+static char     g_name[32];
+static uint8_t  g_name_len = 0;
+static uint8_t  g_connected = 0;
+
+/* ---------------- Main ---------------- */
+int main(void)
+{
+  HAL_Init();
+  SystemClock_Config();
+  MX_GPIO_Init();
+  MX_USART2_UART_Init();
+
+  static volatile uint32_t g_beat = 0;  // 'static volatile' is important
+
+  while (1) {
+      g_beat++;          // this is our heartbeat
+      HAL_Delay(100);    // ~10 increments/second
+  }
+
+  HAL_Delay(100);          // small power-on settle
+  drain_uart(80);          // flush banner
+
+  /* Probe basic AT */
+  g_last_len = send_and_read("AT\r\n", g_last_rx, sizeof(g_last_rx), 300);
+
+  /* Try common name queries */
+  const char *qnames[] = { "AT+NAME?\r\n", "AT+BTNAME?\r\n", "AT+GNAME\r\n" };
+  g_name[0] = 0;
+  for (unsigned i = 0; i < sizeof(qnames)/sizeof(qnames[0]); ++i)
+  {
+    g_last_len = send_and_read(qnames[i], g_last_rx, sizeof(g_last_rx), 400);
+
+    /* parse last non-empty line */
+    char tmp[sizeof(g_last_rx) + 1];
+    memset(tmp, 0, sizeof(tmp));
+    memcpy(tmp, g_last_rx, (g_last_len < sizeof(g_last_rx)) ? g_last_len : sizeof(g_last_rx));
+
+    char *line = tmp, *last_non_empty = NULL;
+    while (line && *line)
+    {
+      char *next = strpbrk(line, "\r\n");
+      if (next) { *next = 0; next += 1; if (*next == '\n') next += 1; }
+      char probe[64]; strncpy(probe, line, sizeof(probe)-1); probe[sizeof(probe)-1] = 0;
+      trim_ascii(probe);
+      if (probe[0] != 0) last_non_empty = line;
+      line = next;
+    }
+    if (last_non_empty)
+    {
+      char parsed[64] = {0};
+      if (parse_name_from_reply(last_non_empty, parsed, sizeof(parsed)))
+      {
+        strncpy(g_name, parsed, sizeof(g_name)-1);
+        g_name_len = (uint8_t)strlen(g_name);
+        break;
+      }
+    }
+  }
+
+  /* Poll loop: keep last reply and an estimated connection flag */
+  for (;;)
+  {
+
+    g_last_len = send_and_read("AT+STAT?\r\n", g_last_rx, sizeof(g_last_rx), 300);
+    if (g_last_len == 0)
+      g_last_len = send_and_read("AT\r\n", g_last_rx, sizeof(g_last_rx), 300);
+
+    char view[sizeof(g_last_rx) + 1];
+    memset(view, 0, sizeof(view));
+    memcpy(view, g_last_rx, (g_last_len < sizeof(g_last_rx)) ? g_last_len : sizeof(g_last_rx));
+
+    if (strstr(view, "CONNECTED") || strstr(view, "A\r") || strstr(view, "A\n"))
+      g_connected = 1;
+    else if (strstr(view, "DISCONNECTED") || strstr(view, "a\r") || strstr(view, "a\n"))
+      g_connected = 0;
+
+    HAL_Delay(1000);
+  }
+}
+
+/* ---------------- Minimal clock (MSI ~2.1 MHz) ---------------- */
+void SystemClock_Config(void)
+{
+  RCC_OscInitTypeDef RCC_OscInitStruct = {0};
+  RCC_ClkInitTypeDef RCC_ClkInitStruct = {0};
+
+  __HAL_PWR_VOLTAGESCALING_CONFIG(PWR_REGULATOR_VOLTAGE_SCALE1);
+
+  RCC_OscInitStruct.OscillatorType = RCC_OSCILLATORTYPE_MSI;
+  RCC_OscInitStruct.MSIState = RCC_MSI_ON;
+  RCC_OscInitStruct.MSICalibrationValue = 0;
+  RCC_OscInitStruct.MSIClockRange = RCC_MSIRANGE_5;   // ~2.097 MHz
+  RCC_OscInitStruct.PLL.PLLState = RCC_PLL_NONE;
+  if (HAL_RCC_OscConfig(&RCC_OscInitStruct) != HAL_OK)
+  {
+    Error_Handler();
+  }
+
+  RCC_ClkInitStruct.ClockType = RCC_CLOCKTYPE_HCLK | RCC_CLOCKTYPE_SYSCLK
+                              | RCC_CLOCKTYPE_PCLK1 | RCC_CLOCKTYPE_PCLK2;
+  RCC_ClkInitStruct.SYSCLKSource = RCC_SYSCLKSOURCE_MSI;
+  RCC_ClkInitStruct.AHBCLKDivider = RCC_SYSCLK_DIV1;
+  RCC_ClkInitStruct.APB1CLKDivider = RCC_HCLK_DIV1;
+  RCC_ClkInitStruct.APB2CLKDivider = RCC_HCLK_DIV1;
+
+  if (HAL_RCC_ClockConfig(&RCC_ClkInitStruct, FLASH_LATENCY_0) != HAL_OK)
+  {
+    Error_Handler();
+  }
+}
+
+/* ---------------- Simple error handler ---------------- */
+void Error_Handler(void)
+{
+  __disable_irq();
+  while (1) {
+
+  }
+}

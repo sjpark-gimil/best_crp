@@ -1,0 +1,10 @@
+../Core/Src/pn532.c:19:26:i2c_write	1
+../Core/Src/pn532.c:22:26:i2c_read	1
+../Core/Src/pn532.c:27:13:wait_ready	4
+../Core/Src/pn532.c:38:13:write_command	2
+../Core/Src/pn532.c:73:13:read_ack	10
+../Core/Src/pn532.c:89:17:read_response	14
+../Core/Src/pn532.c:124:6:PN532_Begin	1
+../Core/Src/pn532.c:134:6:PN532_GetFirmwareVersion	7
+../Core/Src/pn532.c:156:6:PN532_SAMConfiguration	6
+../Core/Src/pn532.c:168:6:PN532_ReadPassiveTargetA	12

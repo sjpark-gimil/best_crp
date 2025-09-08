@@ -1,0 +1,70 @@
+/* ---- PN532 low-level probe over I2C (addr 0x24) ---- */
+#include "main.h"
+#include "gpio.h"
+#include "i2c.h"
+#include <string.h>
+#include <stdint.h>
+#include <stdbool.h>
+
+extern I2C_HandleTypeDef hi2c1;
+
+static volatile uint8_t  pn_status_before = 0xFF;
+static volatile uint8_t  pn_status_after  = 0xFF;
+static volatile int32_t  st_wake_tx       = -1;
+static volatile int32_t  st_fw_tx         = -1;
+static volatile int32_t  st_ack_rx        = -1;
+static volatile uint8_t  ack_buf[8]       = {0};
+static volatile uint8_t  fw_ack_len       = 0;
+
+static void pn532_probe(void)
+{
+    const uint8_t PN_ADDR_W = (uint8_t)(0x24u << 1);  // write/read use same 0x48/0x49 internally
+    HAL_StatusTypeDef st;
+
+    /* 0) try read status byte (some stacks do this) */
+    pn_status_before = 0xEE;
+    st = HAL_I2C_Master_Receive(&hi2c1, PN_ADDR_W, (uint8_t*)&pn_status_before, 1, 10);
+    (void)st;
+
+    /* 1) WAKEUP frame: 00 00 FF 00 FF 00 */
+    const uint8_t wake[] = {0x00,0x00,0xFF,0x00,0xFF,0x00};
+    st = HAL_I2C_Master_Transmit(&hi2c1, PN_ADDR_W, (uint8_t*)wake, sizeof(wake), 20);
+    st_wake_tx = st;   // HAL_OK == 0
+
+    HAL_Delay(5);
+
+    /* 2) Read status again */
+    pn_status_after = 0xEE;
+    st = HAL_I2C_Master_Receive(&hi2c1, PN_ADDR_W, (uint8_t*)&pn_status_after, 1, 10);
+    (void)st;
+
+    /* 3) GetFirmwareVersion command frame:
+          00 00 FF 02 FE  D4 02  2A  00
+          (LEN=0x02, LCS=0xFE, TFI=0xD4, CMD=0x02, DCS=0x2A, POST=0x00)
+     */
+    const uint8_t getfw[] = {0x00,0x00,0xFF,0x02,0xFE, 0xD4,0x02, 0x2A, 0x00};
+    st = HAL_I2C_Master_Transmit(&hi2c1, PN_ADDR_W, (uint8_t*)getfw, sizeof(getfw), 20);
+    st_fw_tx = st;
+
+    /* 4) try to read ACK (should be 00 00 FF 00 FF 00) */
+    memset((void*)ack_buf, 0, sizeof ack_buf);
+    fw_ack_len = 0;
+    HAL_Delay(5);
+    st = HAL_I2C_Master_Receive(&hi2c1, PN_ADDR_W, (uint8_t*)ack_buf, 6, 20);
+    st_ack_rx = st;
+    if (st == HAL_OK) fw_ack_len = 6;
+}
+
+int main(void)
+{
+    HAL_Init();
+    SystemClock_Config();
+    MX_GPIO_Init();
+    MX_I2C1_Init();                 // PB6/PB7 from CubeMX
+
+    HAL_Delay(50);
+    pn532_probe();
+    __BKPT(0);                      // STOP HERE and inspect the variables
+
+    while (1) { HAL_Delay(1000); }
+}
